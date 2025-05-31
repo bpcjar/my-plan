@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Учебный план по безопасности (с сохранением)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Application Structure Plan: 
+        The application uses a tabbed navigation structure to separate content by month and additional sections (Tools, Extra Skills). 
+        This mirrors the chronological and thematic organization of the source report, making it intuitive for users to follow their learning path.
+        Each task is presented as an interactive checklist item, allowing users to mark their progress. Progress counters are updated dynamically for each section and overall.
+        State persistence is handled by Firebase Firestore, saving checkbox states per user.
+        This structure was chosen for its clarity, ease of navigation, and the practical utility of progress tracking for a study plan, now enhanced with persistence.
+        Key interactions:
+        1. Tab clicks to switch between content sections.
+        2. Checkbox clicks to mark tasks as complete, triggering UI updates (strikethrough), progress counter recalculations, and saving state to Firestore.
+        3. Automatic loading of saved states from Firestore on page load.
+    -->
+    <!-- Visualization & Content Choices:
+        - Report Title, Period, Goal: Displayed prominently in the header (HTML/Tailwind) for immediate context. Goal: Inform.
+        - Monthly & Additional Sections: Organized using tabs (HTML buttons, JS for visibility). Content includes headings and lists of tasks. Goal: Organize, Navigate, Inform.
+        - Tasks/Topics: Rendered as interactive list items (`<li>` with checkboxes and unique `data-task-id`). `<code>` tags highlight tools. Goal: Detail, Track. Interaction: Checkboxes. Library: HTML/Tailwind/JS + Firestore for persistence.
+        - Progress Tracking: Text-based counters ("X/Y выполнено") for each section and overall. Updated via JS. Goal: Motivate, Summarize. Library: JS.
+        - Tools List: A dedicated tab lists all tools/platforms mentioned, extracted from the plan. Goal: Reference. Library: HTML/Tailwind.
+        - Justification: This approach presents the information clearly, allows for easy interaction and progress tracking with persistence, and uses simple, effective web technologies.
+    -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .tab-button {
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        .tab-button.active {
+            background-color: #0284c7; /* sky-600 */
+            color: white;
+        }
+        .tab-button:not(.active):hover {
+            background-color: #38bdf8; /* sky-400 */
+            color: white;
+        }
+        .task-checkbox:checked + .task-text {
+            text-decoration: line-through;
+            color: #64748b; /* slate-500 */
+        }
+        .task-item {
+            transition: background-color 0.2s ease-in-out;
+        }
+        .progress-bar-bg {
+            background-color: #e2e8f0; /* slate-200 */
+        }
+        .progress-bar-fill {
+            background-color: #0ea5e9; /* sky-500 */
+            transition: width 0.5s ease-in-out;
+        }
+        .code-tag {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+        }
+        /* Basic loading overlay */
+        #loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            font-size: 1.2rem;
+            color: #0284c7;
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-slate-100 text-slate-800">
+    <div id="loading-overlay">
+        <p>Загрузка данных...</p>
+    </div>
+
+    <div class="container mx-auto max-w-5xl p-4 sm:p-6 lg:p-8">
+        <header class="bg-sky-700 text-white p-6 rounded-xl shadow-2xl mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold mb-2 text-center">Учебный план по безопасности</h1>
+            <p class="text-center text-sky-200 mb-1"><strong>Период:</strong> 2 мая 2025 – 2 августа 2025 (3 месяца)</p>
+            <p class="text-center text-sky-200 mb-4"><strong>Цель:</strong> подготовка к работе в области AppSec, акцент на безопасную разработку на Go и требования вакансий.</p>
+            <div class="mt-4">
+                <p class="text-lg text-center mb-1">Общий прогресс: <span id="user-id-display" class="text-xs font-normal text-sky-300 ml-1"></span></p>
+                <div class="w-full progress-bar-bg rounded-full h-6 shadow-inner">
+                    <div id="total-progress-bar" class="progress-bar-fill h-6 rounded-full text-xs font-medium text-white text-center p-1 leading-none" style="width: 0%;">
+                        0%
+                    </div>
+                </div>
+                <p id="total-progress-text" class="text-sm text-center text-sky-200 mt-1">0/0 выполнено</p>
+            </div>
+            <p class="text-sm mt-6 text-sky-300 text-center">Это интерактивное приложение поможет вам следовать вашему учебному плану. Отмечайте выполненные задачи, чтобы отслеживать свой прогресс по каждому разделу и в целом. Данные сохраняются автоматически.</p>
+        </header>
+
+        <div class="bg-white p-4 sm:p-6 rounded-xl shadow-xl">
+            <nav class="mb-6 flex flex-wrap gap-2 border-b border-slate-200 pb-4">
+                <button data-tab="month1" class="tab-button active text-sm sm:text-base py-2 px-4 rounded-md font-medium bg-slate-200 text-slate-700">Месяц 1</button>
+                <button data-tab="month2" class="tab-button text-sm sm:text-base py-2 px-4 rounded-md font-medium bg-slate-200 text-slate-700">Месяц 2</button>
+                <button data-tab="month3" class="tab-button text-sm sm:text-base py-2 px-4 rounded-md font-medium bg-slate-200 text-slate-700">Месяц 3</button>
+                <button data-tab="additional" class="tab-button text-sm sm:text-base py-2 px-4 rounded-md font-medium bg-slate-200 text-slate-700">Дополнительно</button>
+                <button data-tab="tools" class="tab-button text-sm sm:text-base py-2 px-4 rounded-md font-medium bg-slate-200 text-slate-700">Инструменты</button>
+            </nav>
+
+            <main>
+                <section id="month1" data-section-id="month1" class="tab-content space-y-6">
+                    <div class="p-4 bg-sky-50 rounded-lg border border-sky-200">
+                        <h2 class="text-2xl font-semibold text-sky-700 mb-3">Месяц 1: База и практика в Linux, сети, криптография</h2>
+                        <p class="text-slate-600 mb-4">Первый месяц посвящен закладыванию фундаментальных знаний и практических навыков в Linux, сетях и криптографии. Это создаст прочную основу для дальнейшего изучения Application Security.</p>
+                        <div class="progress-bar-bg rounded-full h-4 mb-1">
+                             <div id="month1-progress-bar" class="progress-bar-fill h-4 rounded-full text-xs font-medium text-white text-center p-0.5 leading-none" style="width: 0%;"></div>
+                        </div>
+                        <p id="month1-progress-text" class="text-xs text-slate-500 text-right">0/0 выполнено</p>
+                    </div>
+
+                    <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Введение в безопасность</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Повторение: основы информационной безопасности (<code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Slurm</code>)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Архитектура безопасности</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">SDL (Secure Development Lifecycle): цели, фазы</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Криптография и PKI</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Что такое криптография, типы: симметричная, асимметричная, хеши</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Алгоритмы: SHA2, bcrypt, AES, RSA — обзор</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Генерация RSA-ключей, шифрование/дешифрование файлов через <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">openssl</code></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Проблемы ручного шифрования</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">PKI, цепочки доверия, сертификаты</span>
+                            </li>
+                        </ul>
+                    </div>
+                     <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Linux: базовая практика</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Повторение: «Linux для начинающих», «Сети в Linux» (уже изучены)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Работа с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">curl</code>, <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">openssl s_client</code>, <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">dig</code>, <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">ping</code>, <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">traceroute</code>, <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">nmap</code> (для сканирования сети и хостов)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">DevTools: просмотр HTTPS-соединения, заголовков, куки</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Анализ HTTP-соединения через <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> (или <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code>), <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">mitmproxy</code> или <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Wireshark</code> (научиться перехватывать, анализировать и модифицировать трафик)</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Протоколы и модель TCP/IP</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Модель OSI vs TCP/IP</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Разбор HTTP/HTTPS: методы, заголовки, куки, редиректы</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month1" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">DNS: как работает, spoofing, роль в безопасности</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section id="month2" data-section-id="month2" class="tab-content hidden space-y-6">
+                    <div class="p-4 bg-sky-50 rounded-lg border border-sky-200">
+                        <h2 class="text-2xl font-semibold text-sky-700 mb-3">Месяц 2: AppSec + OWASP + Go</h2>
+                        <p class="text-slate-600 mb-4">Второй месяц фокусируется на практическом применении знаний в области Application Security, глубоком изучении OWASP Top 10 уязвимостей и особенностях безопасной разработки на языке Go.</p>
+                        <div class="progress-bar-bg rounded-full h-4 mb-1">
+                            <div id="month2-progress-bar" class="progress-bar-fill h-4 rounded-full text-xs font-medium text-white text-center p-0.5 leading-none" style="width: 0%;"></div>
+                        </div>
+                        <p id="month2-progress-text" class="text-xs text-slate-500 text-right">0/0 выполнено</p>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">OWASP Top 10 (на практике с использованием <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> / <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code>)</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A1: Injection (включая SQLi)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Практика SQLi с использованием <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">sqlmap</code> и ручных техник в <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> / <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A2: Broken Authentication</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Тестирование механизмов аутентификации, работа с токенами (JWT) с помощью <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> / <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code></span>
+                            </li>
+                             <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A3: Sensitive Data Exposure</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Анализ передачи чувствительных данных, проверка конфигурации TLS</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A4: XML External Entities (XXE)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Практика нахождения и эксплуатации XXE с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> / <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A5: Broken Access Control (включая IDOR)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Тестирование контроля доступа, выявление IDOR с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> / <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A6: Security Misconfiguration</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Проверка типовых ошибок конфигурации</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A7: Cross-Site Scripting (XSS)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Отражённый, хранимый XSS → задания <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">PortSwigger</code>, тестирование с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> / <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A8: Insecure Deserialization</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Понимание и тестирование уязвимостей десериализации</span>
+                            </li>
+                             <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A9: Using Components with Known Vulnerabilities</span>
+                            </li>
+                             <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Понимание важности SCA (Software Composition Analysis)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">A10: Insufficient Logging & Monitoring</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Практика:</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Пройти 2–3 задания на <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">PortSwigger Academy</code> (XSS, SQLi, IDOR, CSRF) с активным использованием <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Поднять <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">DVWA</code> (Damn Vulnerable Web Application) в <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Docker</code>, протестировать уязвимости OWASP Top 10 через <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> и <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code>. Попробовать <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">sqlmap</code> на SQLi уязвимостях в <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">DVWA</code>.</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Go и безопасность</h3>
+                         <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Валидация и фильтрация данных (разница <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">html/template</code> vs <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">text/template</code> для предотвращения XSS)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Реализация формы на Go с защитой от XSS</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Пароли: использование <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">bcrypt</code> для хеширования, безопасное хранение хешей</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Path Traversal: безопасная работа с путями к файлам</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Безопасная сериализация/десериализация: JSON, YAML</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Работа с переменными окружения: использование <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">.env</code> файлов, исключение их из <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Git</code></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month2" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Реализация безопасной конфигурации приложения на Go с использованием переменных окружения</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section id="month3" data-section-id="month3" class="tab-content hidden space-y-6">
+                    <div class="p-4 bg-sky-50 rounded-lg border border-sky-200">
+                        <h2 class="text-2xl font-semibold text-sky-700 mb-3">Месяц 3: SDL, SAST/DAST, финализация</h2>
+                        <p class="text-slate-600 mb-4">Третий месяц направлен на изучение жизненного цикла безопасной разработки (SDL), освоение инструментов статического и динамического анализа (SAST/DAST), а также на закрепление полученных знаний и подготовку к собеседованиям.</p>
+                         <div class="progress-bar-bg rounded-full h-4 mb-1">
+                            <div id="month3-progress-bar" class="progress-bar-fill h-4 rounded-full text-xs font-medium text-white text-center p-0.5 leading-none" style="width: 0%;"></div>
+                        </div>
+                        <p id="month3-progress-text" class="text-xs text-slate-500 text-right">0/0 выполнено</p>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">SDL, безопасная разработка</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">SDL-чеклист (OWASP / Microsoft)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Принцип наименьших привилегий</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Безопасное логирование и обработка ошибок (избегать утечки чувствительной информации)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Работа с конфигурацией и переменными среды (продолжение)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Secure SDLC: фазы, внедрение практик безопасности в процессы разработки</span>
+                            </li>
+                        </ul>
+                    </div>
+                     <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Анализ кода и автоматизация (SAST, DAST, ASOC)</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                             <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Что такое <strong class="font-semibold">SAST</strong> (Static Application Security Testing), <strong class="font-semibold">DAST</strong> (Dynamic Application Security Testing), IAST (Interactive Application Security Testing)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow"><strong class="font-semibold">SAST:</strong></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Запуск <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">gosec</code> (Go Security Checker) на собственном Go проекте</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Запуск <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Semgrep</code> на собственном проекте (Go, возможно другие языки)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Установка и базовый запуск <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">SonarQube</code> для анализа кода</span>
+                            </li>
+                             <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Разработка простого правила для <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Semgrep</code> (в рамках ознакомления с кастомизацией SAST)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow"><strong class="font-semibold">DAST:</strong></span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Углубленная практика с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code>: автоматизированное сканирование, активное сканирование, spidering, fuzzing.</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Знакомство и практика с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Nuclei</code>: сканирование на основе готовых шаблонов (templates) для выявления известных уязвимостей.</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow"><strong class="font-semibold">ASOC</strong> (Application Security Orchestration and Correlation):</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Концептуальное понимание: как ASOC-решения помогают агрегировать и управлять результатами различных инструментов безопасности (SAST, DAST, SCA).</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Работа с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">GitLab CI/CD</code> (если будет время):</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Базовая интеграция SAST (<code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Semgrep</code>/<code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">gosec</code>) и/или DAST (<code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code>/<code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Nuclei</code>) сканеров в CI/CD пайплайн.</span>
+                            </li>
+                             <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">SCA/OSA (Software Composition Analysis / Open Source Analysis): поверхностное ознакомление с инструментами типа OWASP Dependency-Check или Snyk (концептуально).</span>
+                            </li>
+                        </ul>
+                    </div>
+                     <div>
+                        <h3 class="text-xl font-semibold text-slate-700 mb-3 mt-4">Рефлексия + закрепление</h3>
+                        <ul class="space-y-2 pl-4 list-none">
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Повторение OWASP Top 10, принципов SDL, аспектов безопасности Go.</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Ответы на типовые вопросы собеседований:</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Что такое XSS и как от него защититься в Go? (валидация, <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">html/template</code>, CSP)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Как работают HTTPS и TLS? (рукопожатие, сертификаты, шифрование)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Как безопасно управлять секретами и переменными окружения? (<code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">.env</code>, Vault, переменные среды в CI/CD)</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Как найти уязвимость с помощью <strong class="font-semibold">SAST</strong> (на примере <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">gosec</code> или <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Semgrep</code>)?</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">Как работает <strong class="font-semibold">DAST</strong> (на примере <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code>)?</span>
+                            </li>
+                            <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md ml-6">
+                                <input type="checkbox" data-parent-section="month3" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                                <span class="task-text text-slate-700 flex-grow">В чем разница между <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Burp Suite</code> и <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">OWASP ZAP</code>? Когда какой инструмент предпочтительнее?</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
+                <section id="additional" data-section-id="additional" class="tab-content hidden space-y-6">
+                    <div class="p-4 bg-sky-50 rounded-lg border border-sky-200">
+                        <h2 class="text-2xl font-semibold text-sky-700 mb-3">Дополнительно: навыки по требованиям вакансии</h2>
+                        <p class="text-slate-600 mb-4">Этот раздел включает дополнительные навыки и области знаний, которые часто требуются в вакансиях по AppSec. Их изучение поможет расширить кругозор и повысить конкурентоспособность на рынке труда.</p>
+                        <div class="progress-bar-bg rounded-full h-4 mb-1">
+                            <div id="additional-progress-bar" class="progress-bar-fill h-4 rounded-full text-xs font-medium text-white text-center p-0.5 leading-none" style="width: 0%;"></div>
+                        </div>
+                        <p id="additional-progress-text" class="text-xs text-slate-500 text-right">0/0 выполнено</p>
+                    </div>
+                    <ul class="space-y-2 pl-4 list-none">
+                        <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                            <input type="checkbox" data-parent-section="additional" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                            <span class="task-text text-slate-700 flex-grow"><strong class="font-semibold">Участие в BugBounty:</strong> зарегистрироваться на платформах (HackerOne, Bugcrowd), изучить реальные репорты, попробовать найти простые баги.</span>
+                        </li>
+                        <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                            <input type="checkbox" data-parent-section="additional" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                            <span class="task-text text-slate-700 flex-grow"><strong class="font-semibold">Моделирование угроз:</strong> STRIDE, DFD (Data Flow Diagrams) – базовое понимание и применение на простом приложении.</span>
+                        </li>
+                        <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                            <input type="checkbox" data-parent-section="additional" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                            <span class="task-text text-slate-700 flex-grow"><strong class="font-semibold">Стандарты (ознакомительно):</strong> OWASP ASVS (Application Security Verification Standard), MITRE CWE Top 25, BSIMM.</span>
+                        </li>
+                        <li class="task-item flex items-start py-2 px-3 hover:bg-slate-50 rounded-md">
+                            <input type="checkbox" data-parent-section="additional" class="form-checkbox task-checkbox h-5 w-5 text-sky-600 rounded border-gray-300 focus:ring-sky-500 mr-3 mt-1 flex-shrink-0">
+                            <span class="task-text text-slate-700 flex-grow"><strong class="font-semibold">Контейнеризация:</strong> Углубленная работа с <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Docker</code> (не только <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">DVWA</code>, но и сборка своих Go-приложений). Возможно, основы <code class="code-tag bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-xs">Kubernetes (K8s)</code>, если останется время (развертывание приложения, основы безопасности K8s).</span>
+                        </li>
+                    </ul>
+                </section>
+
+                <section id="tools" class="tab-content hidden space-y-6">
+                     <div class="p-4 bg-sky-50 rounded-lg border border-sky-200">
+                        <h2 class="text-2xl font-semibold text-sky-700 mb-3">Инструменты и Платформы</h2>
+                        <p class="text-slate-600">Здесь перечислены все инструменты, технологии и платформы, упоминаемые в учебном плане. Этот список поможет вам быстро сориентироваться и найти нужный инструмент в контексте плана.</p>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Slurm</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">openssl</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">curl</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">openssl s_client</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">dig</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">ping</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">traceroute</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">nmap</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Burp Suite</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">OWASP ZAP</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">mitmproxy</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Wireshark</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">sqlmap</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">html/template (Go)</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">text/template (Go)</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">bcrypt (Go)</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Git</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">gosec</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Semgrep</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">SonarQube</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Nuclei</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">GitLab CI/CD</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Docker</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">Kubernetes (K8s)</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">PortSwigger Academy</code></div>
+                        <div class="p-3 bg-slate-100 rounded-lg shadow"><code class="code-tag text-base text-sky-700 font-semibold">DVWA</code></div>
+                    </div>
+                </section>
+            </main>
+        </div>
+        <footer class="text-center text-sm text-slate-500 mt-12 pb-8">
+            Интерактивный учебный план &copy; 2025
+        </footer>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, collection, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-study-plan';
+        
+        let db, auth, userId;
+        let appInitialized = false;
+        const loadingOverlay = document.getElementById('loading-overlay');
+
+        const sectionIds = ['month1', 'month2', 'month3', 'additional'];
+
+        function showLoading(show) {
+            if (loadingOverlay) {
+                loadingOverlay.style.display = show ? 'flex' : 'none';
+            }
+        }
+
+        function updateSectionProgress(sectionId) {
+            const sectionElement = document.getElementById(sectionId);
+            if (!sectionElement) return;
+
+            const checkboxesInSection = sectionElement.querySelectorAll('.task-checkbox');
+            const totalTasks = checkboxesInSection.length;
+            let completedTasks = 0;
+            checkboxesInSection.forEach(cb => {
+                if (cb.checked) {
+                    completedTasks++;
+                }
+            });
+
+            const progressPercentage = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+            
+            const progressBar = document.getElementById(`${sectionId}-progress-bar`);
+            const progressText = document.getElementById(`${sectionId}-progress-text`);
+
+            if (progressBar) {
+                progressBar.style.width = `${progressPercentage}%`;
+                progressBar.textContent = totalTasks > 0 && progressPercentage > 10 ? `${Math.round(progressPercentage)}%` : '';
+            }
+            if (progressText) {
+                progressText.textContent = `${completedTasks}/${totalTasks} выполнено`;
+            }
+        }
+
+        function updateTotalProgress() {
+            let grandTotalTasks = 0;
+            let grandCompletedTasks = 0;
+
+            sectionIds.forEach(id => {
+                const sectionElement = document.getElementById(id);
+                if (sectionElement) {
+                    const checkboxesInSection = sectionElement.querySelectorAll('.task-checkbox');
+                    grandTotalTasks += checkboxesInSection.length;
+                    checkboxesInSection.forEach(cb => {
+                        if (cb.checked) {
+                            grandCompletedTasks++;
+                        }
+                    });
+                }
+            });
+            
+            const totalProgressPercentage = grandTotalTasks > 0 ? (grandCompletedTasks / grandTotalTasks) * 100 : 0;
+            const totalProgressBar = document.getElementById('total-progress-bar');
+            const totalProgressText = document.getElementById('total-progress-text');
+
+            if (totalProgressBar) {
+                totalProgressBar.style.width = `${totalProgressPercentage}%`;
+                totalProgressBar.textContent = grandTotalTasks > 0 && totalProgressPercentage > 5 ? `${Math.round(totalProgressPercentage)}%` : '';
+            }
+            if (totalProgressText) {
+                totalProgressText.textContent = `${grandCompletedTasks}/${grandTotalTasks} выполнено`;
+            }
+        }
+        
+        function updateAllProgressDisplays() {
+            sectionIds.forEach(id => updateSectionProgress(id));
+            updateTotalProgress();
+        }
+
+        function assignTaskIds() {
+            const sections = document.querySelectorAll('.tab-content[data-section-id]');
+            sections.forEach(section => {
+                const sectionId = section.dataset.sectionId;
+                const checkboxes = section.querySelectorAll('.task-checkbox');
+                checkboxes.forEach((checkbox, index) => {
+                    checkbox.dataset.taskId = `${sectionId}_${index}`;
+                });
+            });
+        }
+
+        async function loadTaskStatesFromFirestore() {
+            if (!userId || !db) {
+                console.warn("Firestore not ready or user not logged in for loading tasks.");
+                updateAllProgressDisplays(); 
+                showLoading(false);
+                return;
+            }
+            showLoading(true);
+            try {
+                const tasksCollectionPath = `artifacts/${appId}/users/${userId}/securityStudyPlanTasks`;
+                const querySnapshot = await getDocs(collection(db, tasksCollectionPath));
+                
+                querySnapshot.forEach((docSnap) => {
+                    const taskId = docSnap.id;
+                    const taskData = docSnap.data();
+                    const checkbox = document.querySelector(`.task-checkbox[data-task-id="${taskId}"]`);
+                    if (checkbox) {
+                        checkbox.checked = taskData.completed === true;
+                        const taskTextSpan = checkbox.nextElementSibling;
+                        if (taskTextSpan && taskTextSpan.classList.contains('task-text')) {
+                             if (checkbox.checked) {
+                                taskTextSpan.classList.add('text-slate-500', 'line-through');
+                            } else {
+                                taskTextSpan.classList.remove('text-slate-500', 'line-through');
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Error loading tasks from Firestore:", error);
+            } finally {
+                updateAllProgressDisplays();
+                showLoading(false);
+            }
+        }
+
+        async function saveTaskStateToFirestore(taskId, isCompleted) {
+            if (!userId || !db) {
+                console.warn("Firestore not ready or user not logged in for saving task.");
+                return;
+            }
+            try {
+                const taskDocPath = `artifacts/${appId}/users/${userId}/securityStudyPlanTasks/${taskId}`;
+                await setDoc(doc(db, taskDocPath), { completed: isCompleted }, { merge: true });
+            } catch (error) {
+                console.error("Error saving task to Firestore:", error);
+            }
+        }
+
+        function setupTabNavigation() {
+            const tabs = document.querySelectorAll('.tab-button');
+            const contents = document.querySelectorAll('.tab-content');
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    tabs.forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    
+                    const targetTab = tab.getAttribute('data-tab');
+                    contents.forEach(content => {
+                        content.classList.toggle('hidden', content.id !== targetTab);
+                    });
+                });
+            });
+        }
+
+        function setupCheckboxListeners() {
+            const taskCheckboxes = document.querySelectorAll('.task-checkbox');
+            taskCheckboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', (event) => {
+                    const targetCheckbox = event.target;
+                    const parentSectionId = targetCheckbox.getAttribute('data-parent-section');
+                    const taskId = targetCheckbox.dataset.taskId;
+
+                    if (taskId) {
+                        saveTaskStateToFirestore(taskId, targetCheckbox.checked);
+                    }
+                    
+                    const taskTextSpan = targetCheckbox.nextElementSibling;
+                    if (taskTextSpan && taskTextSpan.classList.contains('task-text')) {
+                        if (targetCheckbox.checked) {
+                            taskTextSpan.classList.add('text-slate-500', 'line-through');
+                        } else {
+                            taskTextSpan.classList.remove('text-slate-500', 'line-through');
+                        }
+                    }
+
+                    if (parentSectionId) {
+                         updateSectionProgress(parentSectionId);
+                    }
+                    updateTotalProgress();
+                });
+            });
+        }
+        
+        async function initializeAppLogic() {
+            if (!firebaseConfig) {
+                console.error("Firebase configuration is missing!");
+                showLoading(false);
+                assignTaskIds(); 
+                setupTabNavigation();
+                setupCheckboxListeners();
+                updateAllProgressDisplays();
+                document.getElementById('user-id-display').textContent = `(Ошибка конфигурации)`;
+                return;
+            }
+
+            try {
+                const firebaseApp = initializeApp(firebaseConfig);
+                auth = getAuth(firebaseApp);
+                db = getFirestore(firebaseApp);
+                // setLogLevel('debug'); 
+                appInitialized = true;
+
+                assignTaskIds(); 
+                setupTabNavigation();
+
+                onAuthStateChanged(auth, async (user) => {
+                    const userIdDisplay = document.getElementById('user-id-display');
+                    if (user) {
+                        userId = user.uid;
+                        userIdDisplay.textContent = `(UID: ${userId.substring(0,8)}...)`;
+                        await loadTaskStatesFromFirestore(); 
+                    } else {
+                        userId = null; 
+                        userIdDisplay.textContent = `(Анонимный пользователь)`;
+                        updateAllProgressDisplays(); 
+                        showLoading(false);
+                    }
+                    setupCheckboxListeners(); 
+                });
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    try {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } catch (error) {
+                        console.error("Error signing in with custom token, trying anonymous:", error);
+                        await signInAnonymously(auth);
+                    }
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                showLoading(false);
+                assignTaskIds();
+                setupTabNavigation();
+                setupCheckboxListeners();
+                updateAllProgressDisplays();
+                document.getElementById('user-id-display').textContent = `(Ошибка инициализации)`;
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeAppLogic);
+    </script>
+</body>
+</html>
